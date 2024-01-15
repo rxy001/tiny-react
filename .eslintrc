@@ -32,7 +32,7 @@
     "no-plusplus": 0,
     "no-unused-vars": [
       "warn",
-      { "varsIgnorePattern": "ignore", "argsIgnorePattern": "ignore" }
+      { "varsIgnorePattern": "[iI]gnored", "argsIgnorePattern": "^_" }
     ],
     "no-param-reassign": 0,
     "consistent-return": 0,
@@ -49,7 +49,11 @@
     "no-continue": 0,
     "no-console": 0,
     "no-restricted-syntax": 0,
-    "no-multi-assign": 0
+    "no-multi-assign": 0,
+    "no-constant-condition": 0,
+    "no-prototype-builtins": 0,
+    "guard-for-in": 0,
+    "no-labels": 0
   },
   // 要禁用一组文件的配置文件中的规则，请使用 overrides 和 file
   "overrides": [
@@ -60,7 +64,7 @@
         "@typescript-eslint/no-explicit-any": 0,
         "@typescript-eslint/no-unused-vars": [
           "warn",
-          { "varsIgnorePattern": "ignore", "argsIgnorePattern": "ignore" }
+          { "varsIgnorePattern": "[iI]gnored", "argsIgnorePattern": "^_" }
         ],
         "@typescript-eslint/no-unused-expressions": 0,
         "@typescript-eslint/consistent-type-imports": 2,
