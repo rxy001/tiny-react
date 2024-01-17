@@ -9,18 +9,54 @@ import {
   getHighestPriorityLane,
   mergeLanes,
   markRootFinished,
+  markStarvedLanesAsExpired,
+  includesExpiredLane,
+  includesBlockingLane,
+  NoLane,
+  pickArbitraryLane,
 } from "./ReactFiberLane"
 import { Incomplete, NoFlags, MutationMask } from "./ReactFiberFlags"
 import {
   scheduleSyncCallback,
   flushSyncCallbacks,
 } from "./ReactFiberSyncTaskQueue"
+import { NoMode, ConcurrentMode } from "./ReactTypeOfMode"
 import { createWorkInProgress } from "./ReactFiber"
 import { finishQueueingConcurrentUpdates } from "./ReactFiberConcurrentUpdates"
 import { beginWork } from "./ReactFiberBeginWork"
 import { completeWork } from "./ReactFiberCompleteWork"
 import { commitMutationEffects } from "./ReactFiberCommitWork"
-import { scheduleMicrotask } from "./ReactFiberHostConfig"
+import {
+  scheduleMicrotask,
+  getCurrentEventPriority,
+} from "./ReactFiberHostConfig"
+import {
+  DiscreteEventPriority,
+  ContinuousEventPriority,
+  DefaultEventPriority,
+  IdleEventPriority,
+  lanesToEventPriority,
+  getCurrentUpdatePriority,
+} from "./ReactEventPriorities"
+import {
+  scheduleCallback,
+  cancelCallback,
+  shouldYield,
+  now,
+  ImmediatePriority as ImmediateSchedulerPriority,
+  UserBlockingPriority as UserBlockingSchedulerPriority,
+  NormalPriority as NormalSchedulerPriority,
+  IdlePriority as IdleSchedulerPriority,
+} from "./Scheduler"
+
+type RootExitStatus = 0 | 1 | 5
+const RootInProgress = 0
+const RootFatalErrored = 1
+// const RootErrored = 2
+// const RootSuspended = 3
+// const RootSuspendedWithDelay = 4
+const RootCompleted = 5
+// const RootDidNotComplete = 6
 
 type ExecutionContext = number
 
@@ -36,6 +72,12 @@ let workInProgressRoot: FiberRoot | null = null
 let workInProgress: Fiber | null = null
 // The lanes we're rendering
 let workInProgressRootRenderLanes: Lanes = NoLanes
+// The work left over by components that were visited during this render. Only
+// includes unprocessed updates, not work in bailed out children.
+let workInProgressRootSkippedLanes: Lanes = NoLanes
+
+// Whether to root completed, errored, suspended, etc.
+let workInProgressRootExitStatus: RootExitStatus = RootInProgress
 
 // Most things in the work loop should deal with workInProgressRootRenderLanes.
 // Most things in begin/complete phases should deal with subtreeRenderLanes.
@@ -43,12 +85,43 @@ let workInProgressRootRenderLanes: Lanes = NoLanes
 export let subtreeRenderLanes: Lanes = NoLanes
 
 export function requestEventTime() {
-  return performance.now()
+  return now()
 }
 
-export function requestUpdateLane(_fiber: Fiber): Lane {
-  // Special cases
-  return SyncLane
+export function requestUpdateLane(fiber: Fiber): Lane {
+  const { mode } = fiber
+  if ((mode & ConcurrentMode) === NoMode) {
+    return SyncLane as Lane
+  }
+  if (
+    (executionContext & RenderContext) !== NoContext &&
+    workInProgressRootRenderLanes !== NoLanes
+  ) {
+    // This is a render phase update. These are not officially supported. The
+    // old behavior is to give this the same "thread" (lanes) as
+    // whatever is currently rendering. So if you call `setState` on a component
+    // that happens later in the same render, it will flush. Ideally, we want to
+    // remove the special case and treat them as if they came from an
+    // interleaved event. Regardless, this pattern is not officially supported.
+    // This behavior is only a fallback. The flag only exists until we can roll
+    // out the setState warning, since existing code might accidentally rely on
+    // the current behavior.
+    return pickArbitraryLane(workInProgressRootRenderLanes)
+  }
+
+  const updateLane: Lane = getCurrentUpdatePriority() as any
+  if (updateLane !== NoLane) {
+    return updateLane
+  }
+
+  // This update originated outside React. Ask the host environment for an
+  // appropriate priority, based on the type of event.
+  //
+  // The opaque type returned by the host config is internally a lane, so we can
+  // use that directly.
+  // TODO: Move this type conversion to the event priority module.
+  const eventLane: Lane = getCurrentEventPriority() as any
+  return eventLane
 }
 
 export function scheduleUpdateOnFiber(
@@ -60,7 +133,26 @@ export function scheduleUpdateOnFiber(
   // Mark that the root has a pending update.
   markRootUpdated(root, lane, eventTime)
 
-  ensureRootIsScheduled(root)
+  if (
+    (executionContext & RenderContext) !== NoLanes &&
+    root === workInProgressRoot
+  ) {
+    // This update was dispatched during the render phase. This is a mistake
+    // if the update originates from user space (with the exception of local
+    // hook updates, which are handled differently and don't reach this
+    // function), but there are some internal React features that use this as
+    // an implementation detail, like selective hydration.
+
+    // 在协调阶段某组件渲染时触发了另外一个组件的 setState, 这是一种错误行为. 但 react 也会去更新，
+    // 此 update 会在下次渲染中处理
+    // 这里跟 dispatchSetState 中 RenderPhaseUpdate 不同.
+    console.error(
+      "Cannot update a component while rendering a " +
+        "different component. To locate the bad setState() call ",
+    )
+  } else {
+    ensureRootIsScheduled(root, eventTime)
+  }
 }
 
 // Use this function to schedule a task for a root. There's only one task per
@@ -68,17 +160,45 @@ export function scheduleUpdateOnFiber(
 // of the existing task is the same as the priority of the next level that the
 // root has work on. This function is called on every update, and right before
 // exiting a task.
-function ensureRootIsScheduled(root: FiberRoot) {
+function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
+  const existingCallbackNode = root.callbackNode
+
+  // Check if any lanes are being starved by other work. If so, mark them as
+  // expired so we know to work on those next.
+  markStarvedLanesAsExpired(root, currentTime)
+
   // Determine the next lanes to work on, and their priority.
-  const nextLanes = getNextLanes(root, NoLanes)
+  const nextLanes = getNextLanes(
+    root,
+    // concurrent mode 时准备让步给浏览器时，确定下次工作的优先级
+    root === workInProgressRoot ? workInProgressRootRenderLanes : NoLanes,
+  )
 
   if (nextLanes === NoLanes) {
+    if (existingCallbackNode !== null) {
+      // 不会出现这种情况
+      cancelCallback(existingCallbackNode)
+    }
+    root.callbackNode = null
+    root.callbackPriority = NoLane
     return
   }
 
   // We use the highest priority lane to represent the priority of the callback.
   const newCallbackPriority = getHighestPriorityLane(nextLanes)
 
+  const existingCallbackPriority = root.callbackPriority
+
+  if (existingCallbackPriority === newCallbackPriority) {
+    return
+  }
+
+  if (existingCallbackNode != null) {
+    // Cancel the existing callback. We'll schedule a new one below.
+    cancelCallback(existingCallbackNode)
+  }
+
+  let newCallbackNode
   // Schedule a new callback.
   if (newCallbackPriority === SyncLane) {
     // Special case: Sync React callbacks are scheduled on a special
@@ -93,7 +213,34 @@ function ensureRootIsScheduled(root: FiberRoot) {
         flushSyncCallbacks()
       }
     })
+    newCallbackNode = null
+  } else {
+    let schedulerPriorityLevel
+    switch (lanesToEventPriority(nextLanes)) {
+      case DiscreteEventPriority:
+        schedulerPriorityLevel = ImmediateSchedulerPriority
+        break
+      case ContinuousEventPriority:
+        schedulerPriorityLevel = UserBlockingSchedulerPriority
+        break
+      case DefaultEventPriority:
+        schedulerPriorityLevel = NormalSchedulerPriority
+        break
+      case IdleEventPriority:
+        schedulerPriorityLevel = IdleSchedulerPriority
+        break
+      default:
+        schedulerPriorityLevel = NormalSchedulerPriority
+        break
+    }
+    newCallbackNode = scheduleCallback(
+      schedulerPriorityLevel,
+      performConcurrentWorkOnRoot.bind(null, root),
+    )
   }
+
+  root.callbackPriority = newCallbackPriority
+  root.callbackNode = newCallbackNode
 }
 
 // This is the entry point for synchronous tasks that don't go
@@ -106,11 +253,15 @@ function performSyncWorkOnRoot(root: FiberRoot) {
   const lanes = getNextLanes(root, NoLanes)
   if (!includesSomeLane(lanes, SyncLane)) {
     // There's no remaining sync work left.
-    ensureRootIsScheduled(root)
+    ensureRootIsScheduled(root, now())
     return null
   }
 
-  renderRootSync(root, lanes)
+  const exitStatus = renderRootSync(root, lanes)
+
+  if (exitStatus !== RootCompleted) {
+    throw new Error("This is a bug in React.")
+  }
 
   // We now have a consistent tree. Because this is a sync render, we
   // will commit it even if something suspended.
@@ -122,8 +273,65 @@ function performSyncWorkOnRoot(root: FiberRoot) {
 
   // Before exiting, make sure there's a callback scheduled for the next
   // pending level.
-  ensureRootIsScheduled(root)
+  ensureRootIsScheduled(root, now())
 
+  return null
+}
+
+function performConcurrentWorkOnRoot(
+  root: FiberRoot,
+  didTimeout: boolean,
+): any {
+  if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
+    throw new Error("Should not already be working.")
+  }
+
+  // Flush any pending passive effects before deciding which lanes to work on,
+  // in case they schedule additional work.
+  const originalCallbackNode = root.callbackNode
+
+  // Determine the next lanes to work on, using the fields stored
+  // on the root.
+  // 时间切片分步执行 performConcurrentWorkOnRoot ，因此每次执行都需要获取 nextLanes
+  const lanes = getNextLanes(
+    root,
+    root === workInProgressRoot ? workInProgressRootRenderLanes : NoLanes,
+  )
+
+  // We disable time-slicing in some cases: if the work has been CPU-bound
+  // for too long ("expired" work, to prevent starvation), or we're in
+  // sync-updates-by-default mode.
+
+  // 目前启用时间切片的方法只有使用 transition 。
+  const shouldTimeSlice =
+    !includesBlockingLane(root, lanes) &&
+    !includesExpiredLane(root, lanes) &&
+    !didTimeout
+
+  const exitStatus = shouldTimeSlice
+    ? renderRootConcurrent(root, lanes)
+    : renderRootSync(root, lanes)
+
+  if (exitStatus !== RootInProgress) {
+    if (exitStatus === RootCompleted) {
+      // The render completed.
+      // We now have a consistent tree. The next step is either to commit it,
+      // or, if something suspended, wait to commit it after a timeout.
+      const finishedWork: Fiber = root.current.alternate as any
+
+      root.finishedWork = finishedWork
+      root.finishedLanes = lanes
+      finishConcurrentRender(root, exitStatus, lanes)
+    }
+  }
+
+  // 确定下次任务的优先级，如果有更高优先级的任务需要执行，就终止本次渲染
+  ensureRootIsScheduled(root, now())
+  if (root.callbackNode === originalCallbackNode) {
+    // The task node scheduled for this root is the same one that's
+    // currently executed. Need to return a continuation.
+    return performConcurrentWorkOnRoot.bind(null, root)
+  }
   return null
 }
 
@@ -142,7 +350,8 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
       workLoopSync()
       break
     } catch (thrownValue) {
-      /* empty */
+      console.log(thrownValue)
+      workInProgressRootExitStatus = RootFatalErrored
     }
   } while (true)
 
@@ -159,6 +368,49 @@ function renderRootSync(root: FiberRoot, lanes: Lanes) {
   // Set this to null to indicate there's no in-progress render.
   workInProgressRoot = null
   workInProgressRootRenderLanes = NoLanes
+
+  return workInProgressRootExitStatus
+}
+
+function renderRootConcurrent(root: FiberRoot, lanes: Lanes) {
+  const prevExecutionContext = executionContext
+  executionContext |= RenderContext
+
+  // If the root or lanes have changed, throw out the existing stack
+  // and prepare a fresh one. Otherwise we'll continue where we left off.
+  // x-todo：条件成立的情景
+  if (workInProgressRoot !== root || workInProgressRootRenderLanes !== lanes) {
+    prepareFreshStack(root, lanes)
+  }
+
+  do {
+    try {
+      workLoopConcurrent()
+      break
+    } catch (thrownValue) {
+      console.log(thrownValue)
+      workInProgressRootExitStatus = RootFatalErrored
+    }
+  } while (true)
+  executionContext = prevExecutionContext
+
+  // Check if the tree has completed.
+  if (workInProgress !== null) {
+    // Still work remaining.
+    return RootInProgress
+  }
+  // Set this to null to indicate there's no in-progress render.
+  workInProgressRoot = null
+  workInProgressRootRenderLanes = NoLanes
+
+  // Return the final exit status.
+  return workInProgressRootExitStatus
+}
+
+function workLoopConcurrent() {
+  while (workInProgress !== null && !shouldYield()) {
+    performUnitOfWork(workInProgress)
+  }
 }
 
 function prepareFreshStack(root: FiberRoot, lanes: Lanes): Fiber {
@@ -169,6 +421,8 @@ function prepareFreshStack(root: FiberRoot, lanes: Lanes): Fiber {
   const rootWorkInProgress = createWorkInProgress(root.current, null)
   workInProgress = rootWorkInProgress
   workInProgressRootRenderLanes = subtreeRenderLanes = lanes
+  workInProgressRootSkippedLanes = NoLanes
+  workInProgressRootExitStatus = RootInProgress
 
   finishQueueingConcurrentUpdates()
 
@@ -225,6 +479,11 @@ function completeUnitOfWork(unitOfWork: Fiber): void {
     // Update the next thing we're working on in case something throws.
     workInProgress = completedWork
   } while (completedWork !== null)
+
+  // We've reached the root.
+  if (workInProgressRootExitStatus === RootInProgress) {
+    workInProgressRootExitStatus = RootCompleted
+  }
 }
 
 function commitRoot(root: FiberRoot) {
@@ -303,7 +562,36 @@ function commitRootImpl(root: FiberRoot) {
 
   // Always call this before exiting `commitRoot`, to ensure that any
   // additional work on this root is scheduled.
-  ensureRootIsScheduled(root)
+  // render 阶段可能会产生新的 update
+  ensureRootIsScheduled(root, now())
 
   return null
+}
+
+function finishConcurrentRender(
+  root: FiberRoot,
+  exitStatus: RootExitStatus,
+  _lanes: Lanes,
+) {
+  switch (exitStatus) {
+    case RootInProgress:
+    case RootFatalErrored: {
+      throw new Error("Root did not complete. This is a bug in React.")
+    }
+    case RootCompleted: {
+      // The work completed. Ready to commit.
+      commitRoot(root)
+      break
+    }
+    default: {
+      throw new Error("Unknown root exit status.")
+    }
+  }
+}
+
+export function markSkippedUpdateLanes(lane: Lane | Lanes): void {
+  workInProgressRootSkippedLanes = mergeLanes(
+    lane,
+    workInProgressRootSkippedLanes,
+  )
 }

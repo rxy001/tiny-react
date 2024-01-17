@@ -1,4 +1,9 @@
 import type { SchedulerCallback } from "./Scheduler"
+import {
+  getCurrentUpdatePriority,
+  setCurrentUpdatePriority,
+  DiscreteEventPriority,
+} from "./ReactEventPriorities"
 
 let syncQueue: Array<SchedulerCallback> | null = null
 
@@ -21,9 +26,12 @@ export function flushSyncCallbacks() {
     // Prevent re-entrance.
     isFlushingSyncQueue = true
     let i = 0
+    const previousUpdatePriority = getCurrentUpdatePriority()
+
     try {
       const isSync = true
       const queue = syncQueue
+      setCurrentUpdatePriority(DiscreteEventPriority)
       for (; i < queue.length; i++) {
         let callback = queue[i]
         do {
@@ -35,6 +43,7 @@ export function flushSyncCallbacks() {
     } catch (error) {
       throw error
     } finally {
+      setCurrentUpdatePriority(previousUpdatePriority)
       isFlushingSyncQueue = false
     }
   }

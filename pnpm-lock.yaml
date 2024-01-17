@@ -32,8 +32,8 @@ importers:
         specifier: ^20.4.4
         version: 20.10.8
       "@types/react":
-        specifier: ^18.2.32
-        version: 18.2.47
+        specifier: ^18.2.48
+        version: 18.2.48
       "@typescript-eslint/eslint-plugin":
         specifier: ^6.1.0
         version: 6.18.1(@typescript-eslint/parser@6.18.1)(eslint@8.56.0)(typescript@5.3.3)
@@ -98,8 +98,26 @@ importers:
         specifier: ^5.0.8
         version: 5.0.11(@types/node@20.10.8)
 
+  example:
+    devDependencies:
+      "@vitejs/plugin-react":
+        specifier: ^4.2.1
+        version: 4.2.1(vite@5.0.11)
+      react:
+        specifier: workspace:^1.0.0
+        version: link:../packages/react
+      react-dom:
+        specifier: workspace:^1.0.0
+        version: link:../packages/react-dom
+      vite:
+        specifier: ^5.0.8
+        version: 5.0.11(@types/node@20.10.8)
+
   packages/react:
     devDependencies:
+      react-reconciler:
+        specifier: workspace:^1.0.0
+        version: link:../react-reconciler
       shared:
         specifier: workspace:^
         version: link:../shared
@@ -127,7 +145,11 @@ importers:
 
   packages/scheduler: {}
 
-  packages/shared: {}
+  packages/shared:
+    devDependencies:
+      react:
+        specifier: workspace:^1.0.0
+        version: link:../react
 
 packages:
   /@aashutoshrathi/word-wrap@1.2.6:
@@ -2011,10 +2033,10 @@ packages:
       }
     dev: true
 
-  /@types/react@18.2.47:
+  /@types/react@18.2.48:
     resolution:
       {
-        integrity: sha512-xquNkkOirwyCgoClNk85BjP+aqnIS+ckAJ8i37gAbDs14jfW/J23f2GItAf33oiUPQnqNMALiFeoM9Y5mbjpVQ==,
+        integrity: sha512-qboRCl6Ie70DQQG9hhNREz81jqC1cs9EVNcjQ1AU+jH6NFfSAhVVbrrY/+nSF+Bsk4AOwm9Qa61InvMCyV+H3w==,
       }
     dependencies:
       "@types/prop-types": 15.7.11

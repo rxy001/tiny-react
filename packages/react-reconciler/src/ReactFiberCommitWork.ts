@@ -15,6 +15,7 @@ import {
   Placement,
   Update,
   MutationMask,
+  Ref,
 } from "./ReactFiberFlags"
 import {
   resetTextContent,
@@ -64,6 +65,12 @@ function commitMutationEffectsOnFiber(
     case HostComponent: {
       recursivelyTraverseMutationEffects(root, finishedWork, lanes)
       commitReconciliationEffects(finishedWork)
+      if (flags & Ref) {
+        if (current !== null) {
+          safelyDetachRef(current)
+        }
+        safelyAttachRef(finishedWork)
+      }
 
       // TODO: ContentReset gets cleared by the children during the commit
       // phase. This is a refactor hazard because it means we must read
@@ -234,7 +241,10 @@ function commitDeletionEffectsOnFiber(
   // into their subtree. There are simpler cases in the inner switch
   // that don't modify the stack.
   switch (deletedFiber.tag) {
+    // @ts-ignore
     case HostComponent:
+      safelyDetachRef(deletedFiber)
+    // eslint-disable-next-line no-fallthrough
     case HostText: {
       // We only need to remove the nearest host child. Set the host parent
       // to `null` on the stack to indicate that nested children don't
@@ -478,6 +488,41 @@ function insertOrAppendPlacementNodeIntoContainer(
         insertOrAppendPlacementNodeIntoContainer(sibling, before, parent)
         sibling = sibling.sibling
       }
+    }
+  }
+}
+
+function safelyDetachRef(current: Fiber) {
+  const { ref } = current
+  if (ref !== null) {
+    if (typeof ref === "function") {
+      try {
+        ref(null)
+      } catch (error) {
+        /* empty */
+      }
+    } else {
+      ref.current = null
+    }
+  }
+}
+
+function safelyAttachRef(current: Fiber) {
+  try {
+    commitAttachRef(current)
+  } catch (error) {
+    /* empty */
+  }
+}
+
+function commitAttachRef(finishedWork: Fiber) {
+  const { ref } = finishedWork
+  if (ref !== null) {
+    const instance = finishedWork.stateNode
+    if (typeof ref === "function") {
+      ref(instance)
+    } else {
+      ref.current = instance
     }
   }
 }

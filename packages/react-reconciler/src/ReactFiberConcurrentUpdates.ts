@@ -6,6 +6,10 @@ import type {
 } from "./ReactFiberClassUpdateQueue"
 import { mergeLanes } from "./ReactFiberLane"
 import { HostRoot } from "./ReactWorkTags"
+import type {
+  UpdateQueue as HookQueue,
+  Update as HookUpdate,
+} from "./ReactFiberHooks"
 
 let concurrentQueues: Array<ClassQueue<any>> | null = null
 
@@ -47,6 +51,8 @@ function markUpdateLaneFromFiberToRoot(
   sourceFiber.lanes = mergeLanes(sourceFiber.lanes, lane)
   let { alternate } = sourceFiber
   if (alternate !== null) {
+    // 为什么要给 alternate.lanes 赋值
+    // 可参考 dispatchSetState，从组件挂载到其销毁的过程中，sourceFiber 为同一值
     alternate.lanes = mergeLanes(alternate.lanes, lane)
   }
 
@@ -93,4 +99,46 @@ export function finishQueueingConcurrentUpdates() {
     }
     concurrentQueues = null
   }
+}
+
+export function enqueueConcurrentHookUpdate<S, A>(
+  fiber: Fiber,
+  queue: HookQueue<S, A>,
+  update: HookUpdate<S, A>,
+  lane: Lane,
+) {
+  const { interleaved } = queue
+  if (interleaved === null) {
+    // This is the first update. Create a circular list.
+    update.next = update
+    // At the end of the current render, this queue's interleaved updates will
+    // be transferred to the pending queue.
+    pushConcurrentUpdateQueue(queue as any)
+  } else {
+    update.next = interleaved.next
+    interleaved.next = update
+  }
+  queue.interleaved = update
+
+  return markUpdateLaneFromFiberToRoot(fiber, lane)
+}
+
+export function enqueueConcurrentHookUpdateAndEagerlyBailout<S, A>(
+  fiber: Fiber,
+  queue: HookQueue<S, A>,
+  update: HookUpdate<S, A>,
+  _lane: Lane,
+): void {
+  const { interleaved } = queue
+  if (interleaved === null) {
+    // This is the first update. Create a circular list.
+    update.next = update
+    // At the end of the current render, this queue's interleaved updates will
+    // be transferred to the pending queue.
+    pushConcurrentUpdateQueue(queue as any)
+  } else {
+    update.next = interleaved.next
+    interleaved.next = update
+  }
+  queue.interleaved = update
 }

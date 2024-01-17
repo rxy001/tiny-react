@@ -192,3 +192,26 @@ type BaseFiberRootProperties = {
 }
 
 export type FiberRoot = BaseFiberRootProperties
+
+type BasicStateAction<S> = ((state: S) => S) | S
+type Dispatch<A> = (action: A) => void
+
+export type Dispatcher = {
+  useState<S>(initialState: (() => S) | S): [S, Dispatch<BasicStateAction<S>>]
+  useReducer<S, I, A>(
+    reducer: (s: S, a: A) => S,
+    initialArg: I,
+    init?: (i: I) => S,
+  ): [S, Dispatch<A>]
+  useRef<T = any>(initialValue: T): { current: T }
+  // useEffect(
+  //   create: () => (() => void) | void,
+  //   deps: Array<unknown> | void | null,
+  // ): void
+  // useLayoutEffect(
+  //   create: () => (() => void) | void,
+  //   deps: Array<unknown> | void | null,
+  // ): void
+  useCallback<T>(callback: T, deps: Array<unknown> | void | null): T
+  useMemo<T>(nextCreate: () => T, deps: Array<unknown> | void | null): T
+}

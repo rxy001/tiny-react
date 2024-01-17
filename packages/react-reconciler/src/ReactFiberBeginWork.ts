@@ -9,13 +9,14 @@ import {
   HostComponent,
   HostText,
 } from "./ReactWorkTags"
-import { ContentReset } from "./ReactFiberFlags"
+import { ContentReset, Ref } from "./ReactFiberFlags"
 import { mountChildFibers, reconcileChildFibers } from "./ReactChildFiber"
 import {
   cloneUpdateQueue,
   processUpdateQueue,
 } from "./ReactFiberClassUpdateQueue"
 import { shouldSetTextContent } from "./ReactFiberHostConfig"
+import { renderWithHooks } from "./ReactFiberHooks"
 
 export function beginWork(
   current: Fiber | null,
@@ -23,10 +24,6 @@ export function beginWork(
   renderLanes: Lanes,
 ): Fiber | null {
   // Before entering the begin phase, clear pending update priority.
-  // TODO: This assumes that we're about to evaluate the component and process
-  // the update queue. However, there's an exception: SimpleMemoComponent
-  // sometimes bails out later in the begin phase. This indicates that we should
-  // move this assignment out of the common path and into each branch.
   workInProgress.lanes = NoLanes
 
   switch (workInProgress.tag) {
@@ -66,7 +63,13 @@ function updateFunctionComponent(
 ) {
   workInProgress.lanes = NoLanes
 
-  const nextChildren = Component(nextProps)
+  const nextChildren = renderWithHooks(
+    current,
+    workInProgress,
+    Component,
+    nextProps,
+    renderLanes,
+  )
 
   reconcileChildren(current, workInProgress, nextChildren, renderLanes)
   return workInProgress.child
@@ -117,7 +120,7 @@ function updateHostComponent(
     // empty, we need to schedule the text content to be reset.
     workInProgress.flags |= ContentReset
   }
-
+  markRef(current, workInProgress)
   reconcileChildren(current, workInProgress, nextChildren, renderLanes)
   return workInProgress.child
 }
@@ -160,4 +163,15 @@ function updateHostText(_current: Fiber | null, _workInProgress: Fiber) {
   // Nothing to do here. This is terminal. We'll do the completion step
   // immediately after.
   return null
+}
+
+function markRef(current: Fiber | null, workInProgress: Fiber) {
+  const { ref } = workInProgress
+  if (
+    (current === null && ref !== null) ||
+    (current !== null && current.ref !== ref)
+  ) {
+    // Schedule a Ref effect
+    workInProgress.flags |= Ref
+  }
 }

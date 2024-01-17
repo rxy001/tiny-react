@@ -249,7 +249,7 @@ export function markStarvedLanesAsExpired(
   }
 }
 
-export function getNextLanes(root: FiberRoot, _wipLanes: Lanes): Lanes {
+export function getNextLanes(root: FiberRoot, wipLanes: Lanes): Lanes {
   // Early bailout if there's no pending work left.
   const { pendingLanes } = root
   if (pendingLanes === NoLanes) {
@@ -272,6 +272,28 @@ export function getNextLanes(root: FiberRoot, _wipLanes: Lanes): Lanes {
     return NoLanes
   }
 
+  // If we're already in the middle of a render, switching lanes will interrupt
+  // it and we'll lose our progress. We should only do this if the new lanes are
+  // higher priority.
+  if (wipLanes !== NoLanes && wipLanes !== nextLanes) {
+    const nextLane = getHighestPriorityLane(nextLanes)
+    const wipLane = getHighestPriorityLane(wipLanes)
+    if (
+      // Tests whether the next lane is equal or lower priority than the wip
+      // one. This works because the bits decrease in priority as you go left.
+      nextLane >= wipLane ||
+      // Default priority updates should not interrupt transition updates. The
+      // only difference between default updates and transition updates is that
+      // default updates do not support refresh transitions.
+      (nextLane === DefaultLane && (wipLane & TransitionLanes) !== NoLanes)
+    ) {
+      // 低优先级不会打断高优先级的更新任务，且仅为 DefaultLane 时不会打断 TransitionLanes
+      // x-todo: useEffect 好像是 DefaultLane
+      // Keep working on the existing in-progress tree. Do not interrupt.
+      return wipLanes
+    }
+  }
+
   return nextLanes
 }
 
@@ -287,4 +309,15 @@ export function markRootFinished(root: FiberRoot, remainingLanes: Lanes) {
   root.pendingLanes = remainingLanes
 
   root.expiredLanes &= remainingLanes
+}
+
+export function includesBlockingLane(root: FiberRoot, lanes: Lanes) {
+  const SyncDefaultLanes = InputContinuousLane | DefaultLane
+  return (lanes & SyncDefaultLanes) !== NoLanes
+}
+
+export function includesExpiredLane(root: FiberRoot, lanes: Lanes) {
+  // This is a separate check from includesBlockingLane because a lane can
+  // expire after a render has already started.
+  return (lanes & root.expiredLanes) !== NoLanes
 }

@@ -1,7 +1,7 @@
 import type { ReactNodeList } from "shared/ReactTypes"
 import type { RootTag } from "./ReactRootTags"
 import type { Fiber, FiberRoot } from "./ReactInternalTypes"
-import { NoLane, NoLanes, createLaneMap } from "./ReactFiberLane"
+import { NoLane, NoLanes, createLaneMap, NoTimestamp } from "./ReactFiberLane"
 import { createHostRootFiber } from "./ReactFiber"
 import { initializeUpdateQueue } from "./ReactFiberClassUpdateQueue"
 
@@ -18,6 +18,7 @@ function FiberRootNode(this: FiberRoot, containerInfo: any, tag: RootTag) {
   this.callbackNode = null
   this.callbackPriority = NoLane
   this.eventTimes = createLaneMap(NoLanes)
+  this.expirationTimes = createLaneMap(NoTimestamp)
 
   this.pendingLanes = NoLanes
   this.expiredLanes = NoLanes
@@ -44,7 +45,7 @@ export function createFiberRoot(
 
   uninitializedFiber.memoizedState = initialState
 
-  // TODO: 这里好像无法与 hooks 共用一套更新逻辑
+  // x-todo: 这里好像无法与 hooks 共用一套更新逻辑
   initializeUpdateQueue(uninitializedFiber)
 
   return root

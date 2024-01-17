@@ -139,12 +139,14 @@ function ChildReconciler(shouldTrackSideEffects: boolean) {
       if (current.elementType === elementType) {
         // Move based on index
         const existing = useFiber(current, element.props)
+        existing.ref = coerceRef(element)
         existing.return = returnFiber
         return existing
       }
     }
     // Insert
     const created = createFiberFromElement(element, returnFiber.mode, lanes)
+    created.ref = coerceRef(element)
     created.return = returnFiber
     return created
   }
@@ -178,6 +180,7 @@ function ChildReconciler(shouldTrackSideEffects: boolean) {
             returnFiber.mode,
             lanes,
           )
+          created.ref = coerceRef(newChild)
           created.return = returnFiber
           return created
         }
@@ -463,7 +466,7 @@ function ChildReconciler(shouldTrackSideEffects: boolean) {
   // 1. Fragment 类型的 ReactElement，可通过 ReactElement.type 鉴别类型. Fragment 类型的 Fiber，其 type 以
   // 及 elementType 都为 null，只能通过 tag 来鉴别其类型. 因此判断 current fiber 与 ReactElement
   // 都为 Fragment 类型的条件是 ReactElement.type === REACT_FRAGMENT_TYPE && fiber.tag === Fragment
-  // 2. Lazy 类型 （TODO)
+  // 2. Lazy 类型 （x-todo)
   // 3. 其它类型的 ReactElement，则判断 element.type === fiber.element
   // key 与类型完全相同，则复用 fiber.alternate，否则创建新的 fiber，newFiber 不存在 alternate
   function reconcileSingleElement(
@@ -482,6 +485,7 @@ function ChildReconciler(shouldTrackSideEffects: boolean) {
         if (child.elementType === elementType) {
           deleteRemainingChildren(returnFiber, child.sibling)
           const existing = useFiber(child, element.props)
+          existing.ref = coerceRef(element)
           existing.return = returnFiber
           return existing
         }
@@ -495,6 +499,7 @@ function ChildReconciler(shouldTrackSideEffects: boolean) {
     }
 
     const created = createFiberFromElement(element, returnFiber.mode, lanes)
+    created.ref = coerceRef(element)
     created.return = returnFiber
     return created
   }
@@ -559,3 +564,18 @@ function ChildReconciler(shouldTrackSideEffects: boolean) {
 
 export const reconcileChildFibers = ChildReconciler(true)
 export const mountChildFibers = ChildReconciler(false)
+
+function coerceRef(element: ReactElement) {
+  const mixedRef = (element as any).ref
+
+  if (
+    mixedRef !== null &&
+    typeof mixedRef !== "function" &&
+    typeof mixedRef !== "object"
+  ) {
+    throw new Error(
+      "Expected ref to be a function, an object returned by React.createRef(), or React.useRef(), or null.",
+    )
+  }
+  return mixedRef
+}

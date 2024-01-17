@@ -5,7 +5,6 @@ import {
 
 import { push, pop, peek } from "../SchedulerMinHeap"
 
-// TODO: Use symbols?
 import {
   ImmediatePriority,
   UserBlockingPriority,
@@ -23,7 +22,7 @@ interface Task {
   sortIndex: number
 }
 
-const getCurrentTime = performance.now
+const getCurrentTime = () => performance.now()
 
 // Max 31 bit integer. The max integer size in V8 for 32-bit systems.
 // Math.pow(2, 30) - 1
