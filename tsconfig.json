@@ -1,5 +1,6 @@
 {
-  "extends": ["./tsconfig.base.json"],
-  "include": ["packages", "rollup.config.ts"],
+  // extends 使用 array, ts-node 报错
+  "extends": "./tsconfig.base.json",
+  "include": ["packages"],
   "exclude": []
 }

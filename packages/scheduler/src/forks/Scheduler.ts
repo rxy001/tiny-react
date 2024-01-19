@@ -1,10 +1,9 @@
 import {
-  enableSchedulerDebugging,
   frameYieldMs,
+  continuousYieldMs,
+  maxYieldMs,
 } from "../SchedulerFeatureFlags"
-
 import { push, pop, peek } from "../SchedulerMinHeap"
-
 import {
   ImmediatePriority,
   UserBlockingPriority,
@@ -44,9 +43,6 @@ const taskQueue: Task[] = []
 // Incrementing id counter. Used to maintain insertion order.
 let taskIdCounter = 1
 
-// Pausing the scheduler is useful for debugging.
-let isSchedulerPaused = false
-
 let currentTask: Task | null = null
 let currentPriorityLevel = NormalPriority
 
@@ -55,6 +51,19 @@ let isPerformingWork = false
 
 let isHostCallbackScheduled = false
 let isHostTimeoutScheduled = false
+
+let needsPaint = false
+
+const navigator = window.navigator as any
+
+const supportScheduling =
+  navigator !== undefined &&
+  navigator.scheduling! !== undefined &&
+  navigator.scheduling.isInputPending !== undefined
+
+const isInputPending = supportScheduling
+  ? navigator.scheduling.isInputPending.bind(navigator.scheduling)
+  : null
 
 function flushWork(hasTimeRemaining: boolean, initialTime: number) {
   // We'll need a host callback the next time work is scheduled.
@@ -79,10 +88,7 @@ function flushWork(hasTimeRemaining: boolean, initialTime: number) {
 function workLoop(hasTimeRemaining: boolean, initialTime: number) {
   let currentTime = initialTime
   currentTask = peek(taskQueue) as Task
-  while (
-    currentTask !== null &&
-    !(enableSchedulerDebugging && isSchedulerPaused)
-  ) {
+  while (currentTask !== null) {
     if (
       currentTask.expirationTime > currentTime &&
       (!hasTimeRemaining || shouldYieldToHost())
@@ -101,9 +107,11 @@ function workLoop(hasTimeRemaining: boolean, initialTime: number) {
       if (typeof continuationCallback === "function") {
         currentTask.callback = continuationCallback
       } else if (currentTask === peek(taskQueue)) {
+        // 任务执行结束
         pop(taskQueue)
       }
     } else {
+      // 任务执行结束或被取消
       pop(taskQueue)
     }
     currentTask = peek(taskQueue) as Task
@@ -113,56 +121,6 @@ function workLoop(hasTimeRemaining: boolean, initialTime: number) {
     return true
   }
   return false
-}
-
-function unstable_runWithPriority(
-  priorityLevel: number,
-  eventHandler: Function,
-) {
-  switch (priorityLevel) {
-    case ImmediatePriority:
-    case UserBlockingPriority:
-    case NormalPriority:
-    case LowPriority:
-    case IdlePriority:
-      break
-    default:
-      priorityLevel = NormalPriority
-  }
-
-  const previousPriorityLevel = currentPriorityLevel
-  currentPriorityLevel = priorityLevel
-
-  try {
-    return eventHandler()
-  } finally {
-    currentPriorityLevel = previousPriorityLevel
-  }
-}
-
-function unstable_next(eventHandler: Function) {
-  let priorityLevel
-  switch (currentPriorityLevel) {
-    case ImmediatePriority:
-    case UserBlockingPriority:
-    case NormalPriority:
-      // Shift down to normal priority
-      priorityLevel = NormalPriority
-      break
-    default:
-      // Anything lower than normal priority should remain at the current level.
-      priorityLevel = currentPriorityLevel
-      break
-  }
-
-  const previousPriorityLevel = currentPriorityLevel
-  currentPriorityLevel = priorityLevel
-
-  try {
-    return eventHandler()
-  } finally {
-    currentPriorityLevel = previousPriorityLevel
-  }
 }
 
 function unstable_scheduleCallback(priorityLevel: number, callback: Function) {
@@ -211,18 +169,6 @@ function unstable_scheduleCallback(priorityLevel: number, callback: Function) {
   return newTask
 }
 
-function unstable_pauseExecution() {
-  isSchedulerPaused = true
-}
-
-function unstable_continueExecution() {
-  isSchedulerPaused = false
-  if (!isHostCallbackScheduled && !isPerformingWork) {
-    isHostCallbackScheduled = true
-    requestHostCallback(flushWork)
-  }
-}
-
 function unstable_getFirstCallbackNode() {
   return peek(taskQueue)
 }
@@ -257,7 +203,31 @@ function shouldYieldToHost() {
     return false
   }
 
-  // `isInputPending` isn't available. Yield now.
+  if (needsPaint) {
+    // There's a pending paint (signaled by `requestPaint`). Yield now.
+    return true
+  }
+  if (timeElapsed < continuousYieldMs) {
+    // We haven't blocked the thread for that long. Only yield if there's a
+    // pending discrete input (e.g. click). It's OK if there's pending
+    // continuous input (e.g. mouseover).
+    if (isInputPending !== null) {
+      return isInputPending()
+    }
+  } else if (timeElapsed < maxYieldMs) {
+    // Yield if there's either a pending discrete or continuous input.
+    if (isInputPending !== null) {
+      return isInputPending({
+        includeContinuous: true,
+      })
+    }
+  } else {
+    // We've blocked the thread for a long time. Even if there's no pending
+    // input, there may be some other scheduled work that we don't know about,
+    // like a network event. Yield now.
+    return true
+  }
+
   return true
 }
 
@@ -291,6 +261,9 @@ const performWorkUntilDeadline = () => {
   } else {
     isMessageLoopRunning = false
   }
+  // Yielding to the browser will give it a chance to paint, so we can
+  // reset this.
+  needsPaint = false
 }
 
 let schedulePerformWorkUntilDeadline: () => void
@@ -325,6 +298,12 @@ if (typeof setImmediate === "function") {
   }
 }
 
+function requestPaint() {
+  if (supportScheduling) {
+    needsPaint = true
+  }
+}
+
 function requestHostCallback(callback: typeof flushWork) {
   scheduledHostCallback = callback
   if (!isMessageLoopRunning) {
@@ -339,16 +318,13 @@ export {
   NormalPriority as unstable_NormalPriority,
   IdlePriority as unstable_IdlePriority,
   LowPriority as unstable_LowPriority,
-  unstable_runWithPriority,
-  unstable_next,
   unstable_scheduleCallback,
   unstable_cancelCallback,
   unstable_getCurrentPriorityLevel,
-  shouldYieldToHost as unstable_shouldYield,
-  unstable_continueExecution,
-  unstable_pauseExecution,
   unstable_getFirstCallbackNode,
+  shouldYieldToHost as unstable_shouldYield,
   getCurrentTime as unstable_now,
+  requestPaint as unstable_requestPaint,
 }
 
 export type { Task as TaskNode }

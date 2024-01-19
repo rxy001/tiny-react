@@ -10,6 +10,7 @@
     "@vitejs/plugin-react": "^4.2.1",
     "react": "workspace:^1.0.0",
     "react-dom": "workspace:^1.0.0",
+    "scheduler": "workspace:^1.0.0",
     "vite": "^5.0.8"
   }
 }

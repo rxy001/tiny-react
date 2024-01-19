@@ -1,26 +1,7 @@
 {
-  "env": { "node": true, "es6": true },
-  "extends": [
-    "airbnb-base",
-    "plugin:import/typescript",
-    "plugin:@typescript-eslint/recommended",
-    "prettier"
-  ],
-  "parser": "@typescript-eslint/parser",
-  "plugins": ["@typescript-eslint", "import"],
-  "settings": {
-    "import/parsers": {
-      "@typescript-eslint/parser": [".ts"]
-    },
-    "import/resolver": {
-      "typescript": true
-    }
-  },
-  "parserOptions": {
-    "ecmaVersion": "latest",
-    "sourceType": "module",
-    "project": true
-  },
+  "env": { "node": true, "es6": true, "jest": true, "browser": true },
+  // airbnb-base 实际已经包含 eslint-plugin-import
+  "extends": ["airbnb-base", "prettier"],
   "root": true,
   "rules": {
     "camelcase": 0,
@@ -53,24 +34,58 @@
     "no-constant-condition": 0,
     "no-prototype-builtins": 0,
     "guard-for-in": 0,
-    "no-labels": 0
+    "no-labels": 0,
+    "no-unused-expressions": 0
   },
-  // 要禁用一组文件的配置文件中的规则，请使用 overrides 和 file
   "overrides": [
     {
-      "files": ["*.ts"],
+      "extends": [
+        "plugin:import/typescript",
+        "plugin:@typescript-eslint/recommended"
+      ],
+      "parser": "@typescript-eslint/parser",
+      "plugins": ["@typescript-eslint", "import"],
+      "settings": {
+        "import/parsers": {
+          "@typescript-eslint/parser": [".ts"]
+        },
+        "import/resolver": {
+          "typescript": true
+        }
+      },
+      "parserOptions": {
+        "ecmaVersion": "latest",
+        "sourceType": "module",
+        "project": true
+      },
+      "files": ["**/*.ts", "**/*.tsx"],
       "rules": {
-        "no-unused-expressions": 0,
         "@typescript-eslint/no-explicit-any": 0,
         "@typescript-eslint/no-unused-vars": [
           "warn",
           { "varsIgnorePattern": "[iI]gnored", "argsIgnorePattern": "^_" }
         ],
-        "@typescript-eslint/no-unused-expressions": 0,
+        "@typescript-eslint/no-unused-expressions": 2,
         "@typescript-eslint/consistent-type-imports": 2,
         "@typescript-eslint/no-empty-function": 1,
         "@typescript-eslint/ban-ts-comment": 0,
         "@typescript-eslint/ban-types": 0
+      }
+    },
+    {
+      "files": ["**/__tests__/**/*.test.js"],
+      "settings": {
+        "import/parsers": [".ts, .js"]
+      },
+      "parserOptions": {
+        "ecmaVersion": "latest",
+        "sourceType": "script",
+        "ecmaFeatures": {
+          "jsx": true
+        }
+      },
+      "rules": {
+        "global-require": 0
       }
     }
   ]

@@ -101,3 +101,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />)
 组件每次更新都会重新构造 hook 链表，每个链表节点 hook 对象都是浅拷贝自当前已存在 hook 链表，因此 `initialFiber` 与 `initialFiber.alternate` 中每个相对应的 stateHook 对象共用的是同一个 `updateQueue`。
 
 每当 `initialFiber` 或 `initialFiber.alternate` 成为 `workInProgress` 时，会在 `beginWork` 阶段重置 `lanes` 并根据待处理的 `updates` 计算出下次更新所需的 `lanes`。因此其成为 `current` 时，`lanes` 是完全正确的，React 可以依据该 `lanes` 进行工作。而 `setState` 中 `initialFiber` 是固定的，无法确定到底给 `initialFiber` 还是 `initialFiber.alternate` 设置 `lanes`，因此每次 `setState` 都会对 `initialFiber` 和 `initialFiber.alternate` 的 `lanes` 加上 `update.lane`。
+
+8. reconciler 阶段，什么情况下会插入优先级更高的任务？
+
+事件循环的任务队列是一个集合，应该是按优先级来执行的。
+
+- 网络请求的响应
+- 用户交互
+- 定时器
