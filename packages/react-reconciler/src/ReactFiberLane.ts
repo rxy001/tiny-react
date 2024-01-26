@@ -321,3 +321,7 @@ export function includesExpiredLane(root: FiberRoot, lanes: Lanes) {
   // expire after a render has already started.
   return (lanes & root.expiredLanes) !== NoLanes
 }
+
+export function removeLanes(set: Lanes, subset: Lanes | Lane): Lanes {
+  return set & ~subset
+}

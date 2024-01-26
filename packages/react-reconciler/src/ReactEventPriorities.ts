@@ -57,6 +57,12 @@ export function isHigherEventPriority(
   return a !== 0 && a < b
 }
 
+/**
+ * Converts lanes to event priority.
+ *
+ * @param {Lanes} lanes - The lanes to convert.
+ * @return {EventPriority} 返回 lanes 最高优先级相对应的 event priority， 最低为 DefaultLane
+ */
 export function lanesToEventPriority(lanes: Lanes): EventPriority {
   const lane = getHighestPriorityLane(lanes)
   if (!isHigherEventPriority(DiscreteEventPriority, lane)) {

@@ -11,6 +11,8 @@ import {
 import { precacheFiberNode, updateFiberProps } from "./ReactDOMComponentTree"
 import { COMMENT_NODE } from "../shared/HTMLNodeType"
 
+export { detachDeletedInstance } from "./ReactDOMComponentTree"
+
 export type Type = string
 export type TextInstance = Text
 export type Instance = Element

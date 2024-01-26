@@ -12,6 +12,9 @@
    - 支持函数式组件、原生组件、文本组件
 
 2. concurrentRendering 和 hooks
+
    - 实现 Lanes 优先级机制，用于决定渲染任务的优先级，以支持 concurrentRendering
    - 实现函数式组件 Hooks，包括 useState、useRef(暂时无法用于函数式组件)、useMemo、useCallback、useReducer
    - 目前 Render 阶段尚未实现性能优化，useMemo、useCallback 只能缓存，无法避免组件重复渲染
+
+3.

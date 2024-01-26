@@ -14,6 +14,8 @@ export const DefaultLane = /*                     */ 0b0000000000000000000000000
 
 一个 `fiber` 可能关联一个或多个 `update` ，因此其通过 `lanes` 字段记录所有的 `update.lane`。 React 每次更新都与一个或多个 `lane` 相关联（`RenderLanes`），在处理 `updateQueue` 时只有跟 `RenderLanes` 相同的或其子集 ( `renderLanes & lane === lane` ) 的 `update` 才会处理。
 
+在 `beginWork` 阶段可以通过 `fiber.lanes` 判断是否需要更新该组件，`fiber.childLanes` 判断该组件的子代组件是否需要更新。以这两个字段做些性能优化，避免组件的重新渲染。
+
 `transition` 具备多个 `lane` ，为 `update` 分配 `lane` 的算法是对单个事件中的所有 `transition` 分配相同的 `lane` 。
 
 ```js

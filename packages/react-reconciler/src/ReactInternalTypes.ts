@@ -204,14 +204,14 @@ export type Dispatcher = {
     init?: (i: I) => S,
   ): [S, Dispatch<A>]
   useRef<T = any>(initialValue: T): { current: T }
-  // useEffect(
-  //   create: () => (() => void) | void,
-  //   deps: Array<unknown> | void | null,
-  // ): void
-  // useLayoutEffect(
-  //   create: () => (() => void) | void,
-  //   deps: Array<unknown> | void | null,
-  // ): void
+  useEffect(
+    create: () => (() => void) | void,
+    deps: Array<unknown> | void | null,
+  ): void
+  useLayoutEffect(
+    create: () => (() => void) | void,
+    deps: Array<unknown> | void | null,
+  ): void
   useCallback<T>(callback: T, deps: Array<unknown> | void | null): T
   useMemo<T>(nextCreate: () => T, deps: Array<unknown> | void | null): T
 }
