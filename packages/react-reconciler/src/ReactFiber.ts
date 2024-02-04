@@ -10,8 +10,8 @@ import { NoMode, ConcurrentMode } from "./ReactTypeOfMode"
 import {
   HostRoot,
   HostComponent,
-  IndeterminateComponent,
   HostText,
+  FunctionComponent,
 } from "./ReactWorkTags"
 import { NoFlags, StaticMask } from "./ReactFiberFlags"
 
@@ -154,7 +154,7 @@ export function createFiberFromTypeAndProps(
   mode: TypeOfMode,
   lanes: Lanes,
 ): Fiber {
-  let fiberTag: WorkTag = IndeterminateComponent
+  let fiberTag: WorkTag = FunctionComponent
   // The resolved type is set if we know what the final type will be. I.e. it's not lazy.
   const resolvedType = type
   if (typeof type === "string") {

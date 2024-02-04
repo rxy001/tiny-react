@@ -1,9 +1,26 @@
+import { useState } from "react"
+
 function App() {
+  const [first, setFirst] = useState("")
+  const [last, setLast] = useState("")
+
+  console.log("render")
+
   return (
     <div>
-      <p key="1">1</p>
-      <p key="2">2</p>
-      <p key="3">3</p>
+      <button
+        onClick={() => {
+          Promise.resolve().then(() => {
+            setFirst("r")
+            setLast("xy")
+          })
+        }}
+      >
+        click
+      </button>
+      <p>
+        {first} {last}
+      </p>
     </div>
   )
 }

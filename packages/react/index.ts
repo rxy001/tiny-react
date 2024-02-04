@@ -4,4 +4,6 @@ export {
   useCallback,
   useMemo,
   useRef,
+  useEffect,
+  useLayoutEffect,
 } from "./src/React"

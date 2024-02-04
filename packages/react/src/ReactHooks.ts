@@ -38,5 +38,21 @@ export function useMemo<T>(
 
 export function useRef<T>(initialValue?: T): { current: T } {
   const dispatcher = resolveDispatcher()
-  return dispatcher.useRef(initialValue)
+  return dispatcher.useRef(initialValue) as { current: T }
+}
+
+export function useEffect(
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+): void {
+  const dispatcher = resolveDispatcher()
+  return dispatcher.useEffect(create, deps)
+}
+
+export function useLayoutEffect(
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+): void {
+  const dispatcher = resolveDispatcher()
+  return dispatcher.useLayoutEffect(create, deps)
 }

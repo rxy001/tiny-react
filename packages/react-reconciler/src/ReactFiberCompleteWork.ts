@@ -2,7 +2,6 @@ import type { Fiber } from "./ReactInternalTypes"
 import type { Lanes } from "./ReactFiberLane"
 import type { Type, Props, Instance } from "./ReactFiberHostConfig"
 import {
-  IndeterminateComponent,
   FunctionComponent,
   HostRoot,
   HostComponent,
@@ -35,7 +34,6 @@ export function completeWork(
   // Ideally we would have a special version of the work loop only
   // for hydration.
   switch (workInProgress.tag) {
-    case IndeterminateComponent:
     case FunctionComponent:
     case HostRoot: {
       bubbleProperties(workInProgress)

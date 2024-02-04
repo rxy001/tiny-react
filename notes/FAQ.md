@@ -1,38 +1,42 @@
 ### FAQ
 
 1. `FiberRoot` 与 `RootFiber` 区别
-   - `FiberRoot` 保存 `React` 运行时依赖的全局状态，与普通的 `Fiber Node` 结构不同。
-   - `RootFiber` 与普通的 `Fiber Node` 结构一样，作为初始组件 (`<App />`) 的父组件，`Fiber Tree` 的起点。
-   - `FiberRoot.current === RootFiber.stateNode`，因此每次 `render` 时可以轻松获得 `Fiber Tree` 起点，对其进行更新
+
+- `FiberRoot` 保存 `React` 运行时依赖的全局状态，与普通的 `Fiber Node` 结构不同。
+- `RootFiber` 与普通的 `Fiber Node` 结构一样，作为初始组件 (`<App />`) 的父组件，`Fiber Tree` 的起点。
+- `FiberRoot.current === RootFiber.stateNode`，因此每次 `render` 时可以轻松获得 `Fiber Tree` 起点，对其进行更新
+
 2. SharedQueue 分为 pending 和 interleaved 两个队列？
 
-   pending 队列为此次更新的 update 集合， interleaved 为更新任务执行之前插入的 update 集合。
+pending 队列为此次更新的 update 集合， interleaved 为更新任务执行之前插入的 update 集合。
 
-   在 render 阶段执行之前，interleaved 队列中的 update 都将转移到 pending 队列中。当函数式组件渲染时产生的 update ，将添加的 pending 队列中，意味着将在此次 render 阶段处理该 update。
+在 render 阶段执行之前，interleaved 队列中的 update 都将转移到 pending 队列中。当函数式组件渲染时产生的 update ，将添加的 pending 队列中，意味着将在此次 render 阶段处理该 update。
 
-   ```jsx
-   function CountLabel({ count }) {
-     const [prevCount, setPrevCount] = useState(count)
+```jsx
+function CountLabel({ count }) {
+  const [prevCount, setPrevCount] = useState(count)
 
-     const [trend, setTrend] = useState(null)
+  const [trend, setTrend] = useState(null)
 
-     if (prevCount !== count) {
-       setPrevCount(count)
-       setTrend(count > prevCount ? "increasing" : "decreasing")
-     }
+  if (prevCount !== count) {
+    setPrevCount(count)
+    setTrend(count > prevCount ? "increasing" : "decreasing")
+  }
 
-     return (
-       <>
-         <h1>{count}</h1>
-         {trend && <p>The count is {trend}</p>}
-       </>
-     )
-   }
-   ```
+  return (
+    <>
+      <h1>{count}</h1>
+      {trend && <p>The count is {trend}</p>}
+    </>
+  )
+}
+```
 
-   `setPrevCount` 产生的 `update` 会在组件渲染结束后立即重新渲染该组件进行处理，并且是在渲染子组件之前进行。这样，子组件就不需要进行两次渲染。此外，只能像这样更新当前渲染组件的状态，在渲染过程中调用另外一个组件的 `setState` 是错误的。
+`setPrevCount` 产生的 `update` 会在组件渲染结束后立即重新渲染该组件进行处理，并且是在渲染子组件之前进行。这样，子组件就不需要进行两次渲染。此外，只能像这样更新当前渲染组件的状态，在渲染过程中调用另外一个组件的 `setState` 是错误的。
 
 3. `MarkUpdateLaneFromFiberToRoot` 为什么更新 `sourceFiber.alternate` 的 `lanes` 和 `childLanes` ?
+
+FAQ 7
 
 4. Fiber 的 type、elementType 字段的区别？
 
@@ -109,3 +113,23 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />)
 - 网络请求的响应
 - 用户交互
 - 定时器
+
+9.  React 内部性能优化，避免重复渲染
+
+组件是否重新渲染由 3 个关键因素决定 `state、 props、 context` （暂不考虑 `context`）
+
+克隆 `fiber` 相比与复用 `fiber` 的区别在于创建 `workInProgress` 时 `pendingProps` 值是 `current.pendingProps` 而非 `ReactElement.props`
+
+在 `beginWork` 阶段初期，首先判断 `oldProps !== newProps` ，如果成立那么该组件将重新渲染(`didReceiveUpdate === true`)。在 React 的使用过程中会发现，当某个组件（标记为 UpdateFC）的状态发生变化时，其父辈组件不会重新渲染，而后代组件在没有任何优化手段的情况下都会重新渲染。即使子组件 `props` 没有引用父组件的 `state` 。这是由于 `rootFiber` 自始至终都不会发生变化，每次更新都会克隆根组件的 `fiber`，UpdateFC 的父辈组件 `state、props` 未发生变化，将**克隆** `fiber`，不会重新渲染。而由于 UpdateFC 组件的重新渲染，生成子组件新的 ReactElement，进入 reconciler 阶段此时子组件非克隆而是**复用** `fiber`，子组件的 `props` 发生了变化，导致重新渲染。此后优化失效，子代组件都需重新渲染。
+
+如果 `oldProps === newProps`，有以下情况下避免组件重新渲染
+
+- `fiber.lanes === NoLanes && fiber.childLanes === NoLanes`, 该组件包括其子代组件都不会重新渲染
+- `fiber.lanes === NoLanes && fiber.childLanes !== NoLanes`, 该组件不会重新渲染，部分子代组件会重新渲染
+- `fiber.lanes !== NoLanes` 意味着有更新(即调用了 `setState`)，会假设该组件未接收到新的更新 (`didReceiveUpdate === false`)，组件重新渲染，但如果更新的 `state` 与目前 `state` 值完全一致，不会触发组件的 effect。此时 `fiber.childLanes === NoLanes` 将完全跳过子组件的渲染，否则克隆子组件的 `fiber`。
+
+以上是执行更新任务时所做的优化，而 `setState` 相同的值可能会直接略过此次更新。
+
+10. 当 `setState` 与目前 state 同一值时，React 可能还会重新渲染特定组件，但不会渲染其子组件以及触发 effect ?
+
+`dispatchSetState` 时 `fiber.lanes === NoLanes && (alternate === null || alternate.lanes === NoLanes)` 才能完全跳过更新任务。此时表明 `updateQueue` 为空，但 `updateQueue` 为空不代表上述条件成立。 `dispatchSetState` 会同时设置 `fiber` 与 `fiber.alternate` 的 `lanes`，而 `lanes` 值是在组件渲染期间重新计算的，因此在 `setState` 后组件至少需要渲染2次才能将 `fiber.lanes` 和 `fiber.alternate.lanes` 设置为 `NoLanes`。

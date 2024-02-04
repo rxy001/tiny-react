@@ -15,7 +15,12 @@ import {
   NoLane,
   pickArbitraryLane,
 } from "./ReactFiberLane"
-import { Incomplete, NoFlags, MutationMask } from "./ReactFiberFlags"
+import {
+  Incomplete,
+  NoFlags,
+  MutationMask,
+  PassiveMask,
+} from "./ReactFiberFlags"
 import {
   scheduleSyncCallback,
   flushSyncCallbacks,
@@ -25,7 +30,12 @@ import { createWorkInProgress } from "./ReactFiber"
 import { finishQueueingConcurrentUpdates } from "./ReactFiberConcurrentUpdates"
 import { beginWork } from "./ReactFiberBeginWork"
 import { completeWork } from "./ReactFiberCompleteWork"
-import { commitMutationEffects } from "./ReactFiberCommitWork"
+import {
+  commitMutationEffects,
+  commitPassiveUnmountEffects,
+  commitPassiveMountEffects,
+  commitLayoutEffects,
+} from "./ReactFiberCommitWork"
 import {
   scheduleMicrotask,
   getCurrentEventPriority,
@@ -37,6 +47,8 @@ import {
   IdleEventPriority,
   lanesToEventPriority,
   getCurrentUpdatePriority,
+  lowerEventPriority,
+  setCurrentUpdatePriority,
 } from "./ReactEventPriorities"
 import {
   scheduleCallback,
@@ -78,6 +90,11 @@ let workInProgressRootSkippedLanes: Lanes = NoLanes
 
 // Whether to root completed, errored, suspended, etc.
 let workInProgressRootExitStatus: RootExitStatus = RootInProgress
+
+let rootDoesHavePassiveEffects: boolean = false
+let rootWithPendingPassiveEffects: FiberRoot | null = null
+
+let pendingPassiveEffectsLanes: Lanes = NoLanes
 
 // Most things in the work loop should deal with workInProgressRootRenderLanes.
 // Most things in begin/complete phases should deal with subtreeRenderLanes.
@@ -246,6 +263,8 @@ function ensureRootIsScheduled(root: FiberRoot, currentTime: number) {
 // This is the entry point for synchronous tasks that don't go
 // through Scheduler
 function performSyncWorkOnRoot(root: FiberRoot) {
+  flushPassiveEffects()
+
   if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
     throw new Error("Should not already be working.")
   }
@@ -282,13 +301,31 @@ function performConcurrentWorkOnRoot(
   root: FiberRoot,
   didTimeout: boolean,
 ): any {
+  const originalCallbackNode = root.callbackNode
+
+  // 确保组件 rerender 后 PassiveEffect 都会执行.
+  // 在 concurrent mode 中, PassiveEffects 执行时机有两种
+  // 1. 由 SyncLanes 更新任务产生的 PassiveEffects 同步执行.
+  // 2. 其它优先级更新任务产生的 PassiveEffects 异步执行(PassiveEffect 宏任务).
+  const didFlushPassiveEffects = flushPassiveEffects()
+
+  if (didFlushPassiveEffects) {
+    // Something in the passive effect phase may have canceled the current task.
+    // Check if the task node for this root was changed.
+    if (root.callbackNode !== originalCallbackNode) {
+      // The current task was canceled. Exit. We don't need to call
+      // `ensureRootIsScheduled` because the check above implies either that
+      // there's a new task, or that there's no remaining work on this root.
+      return null
+    }
+  }
+
   if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
     throw new Error("Should not already be working.")
   }
 
   // Flush any pending passive effects before deciding which lanes to work on,
   // in case they schedule additional work.
-  const originalCallbackNode = root.callbackNode
 
   // Determine the next lanes to work on, using the fields stored
   // on the root.
@@ -531,6 +568,22 @@ function commitRootImpl(root: FiberRoot) {
     // times out.
   }
 
+  if (
+    (finishedWork.subtreeFlags & PassiveMask) !== NoFlags ||
+    (finishedWork.flags & PassiveMask) !== NoFlags
+  ) {
+    if (!rootDoesHavePassiveEffects) {
+      rootDoesHavePassiveEffects = true
+      scheduleCallback(NormalSchedulerPriority, () => {
+        flushPassiveEffects()
+        // This render triggered passive effects: release the root cache pool
+        // *after* passive effects fire to avoid freeing a cache pool that may
+        // be referenced by a node in the tree (HostRoot, Cache boundary etc)
+        return null
+      })
+    }
+  }
+
   // Check if there are any effects in the whole tree.
   const subtreeHasEffects =
     (finishedWork.subtreeFlags & MutationMask) !== NoFlags
@@ -545,6 +598,8 @@ function commitRootImpl(root: FiberRoot) {
     // The next phase is the mutation phase, where we mutate the host tree.
     commitMutationEffects(root, finishedWork, lanes)
 
+    commitLayoutEffects(finishedWork)
+
     // The work-in-progress tree is now the current tree. This must come after
     // the mutation phase, so that the previous tree is still current during
     // componentWillUnmount, but before the layout phase, so that the finished
@@ -555,6 +610,23 @@ function commitRootImpl(root: FiberRoot) {
   } else {
     // No effects.
     root.current = finishedWork
+  }
+
+  if (rootDoesHavePassiveEffects) {
+    // This commit has passive effects. Stash a reference to them. But don't
+    // schedule a callback until after flushing layout work.
+    rootDoesHavePassiveEffects = false
+    rootWithPendingPassiveEffects = root
+    pendingPassiveEffectsLanes = lanes
+  }
+
+  // If the passive effects are the result of a discrete render, flush them
+  // synchronously at the end of the current task so that the result is
+  // immediately observable. Otherwise, we assume that they are not
+  // order-dependent and do not need to be observed by external systems, so we
+  // can wait until after paint.
+  if (includesSomeLane(pendingPassiveEffectsLanes, SyncLane)) {
+    flushPassiveEffects()
   }
 
   // Read this again, since an effect might have updated it
@@ -594,4 +666,55 @@ export function markSkippedUpdateLanes(lane: Lane | Lanes): void {
     lane,
     workInProgressRootSkippedLanes,
   )
+}
+
+export function flushPassiveEffects(): boolean {
+  if (rootWithPendingPassiveEffects !== null) {
+    const renderPriority = lanesToEventPriority(pendingPassiveEffectsLanes)
+
+    // 目前不存在 offscreenComponent，因此 renderPriority 最低为 DefaultEventPriority
+    // 通过 lowerEventPriority 比较后，priority 只能为 DefaultEventPriority
+    const priority = lowerEventPriority(DefaultEventPriority, renderPriority)
+    const previousPriority = getCurrentUpdatePriority()
+
+    try {
+      setCurrentUpdatePriority(priority)
+      return flushPassiveEffectsImpl()
+    } finally {
+      setCurrentUpdatePriority(previousPriority)
+      // Once passive effects have run for the tree - giving components a
+      // chance to retain cache instances they use - release the pooled
+      // cache at the root (if there is one)
+    }
+  }
+  return false
+}
+
+function flushPassiveEffectsImpl() {
+  if (rootWithPendingPassiveEffects === null) {
+    return false
+  }
+
+  const root = rootWithPendingPassiveEffects
+  rootWithPendingPassiveEffects = null
+  // TODO: This is sometimes out of sync with rootWithPendingPassiveEffects.
+  // Figure out why and fix it. It's not causing any known issues (probably
+  // because it's only used for profiling), but it's a refactor hazard.
+  pendingPassiveEffectsLanes = NoLanes
+
+  if ((executionContext & (RenderContext | CommitContext)) !== NoContext) {
+    throw new Error("Cannot flush passive effects while already rendering.")
+  }
+
+  const prevExecutionContext = executionContext
+  executionContext |= CommitContext
+
+  commitPassiveUnmountEffects(root.current)
+  commitPassiveMountEffects(root.current)
+
+  executionContext = prevExecutionContext
+
+  flushSyncCallbacks()
+
+  return true
 }

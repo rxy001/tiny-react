@@ -1,22 +1,28 @@
 import type { Fiber } from "./ReactInternalTypes"
 import type { Lanes } from "./ReactFiberLane"
 import type { RootState } from "./ReactFiberRoot"
-import { NoLanes } from "./ReactFiberLane"
+import { NoLanes, includesSomeLane } from "./ReactFiberLane"
 import {
-  IndeterminateComponent,
   FunctionComponent,
   HostRoot,
   HostComponent,
   HostText,
 } from "./ReactWorkTags"
 import { ContentReset, Ref } from "./ReactFiberFlags"
-import { mountChildFibers, reconcileChildFibers } from "./ReactChildFiber"
+import {
+  mountChildFibers,
+  reconcileChildFibers,
+  cloneChildFibers,
+} from "./ReactChildFiber"
 import {
   cloneUpdateQueue,
   processUpdateQueue,
 } from "./ReactFiberClassUpdateQueue"
 import { shouldSetTextContent } from "./ReactFiberHostConfig"
-import { renderWithHooks } from "./ReactFiberHooks"
+import { renderWithHooks, bailoutHooks } from "./ReactFiberHooks"
+import { markSkippedUpdateLanes } from "./ReactFiberWorkLoop"
+
+let didReceiveUpdate: boolean = false
 
 export function beginWork(
   current: Fiber | null,
@@ -26,9 +32,38 @@ export function beginWork(
   // Before entering the begin phase, clear pending update priority.
   workInProgress.lanes = NoLanes
 
+  if (current !== null) {
+    const oldProps = current.memoizedProps
+    const newProps = workInProgress.pendingProps
+
+    if (oldProps !== newProps) {
+      // If props, mark the fiber as having performed work.
+      // This may be unset if the props are determined to be equal later (memo).
+      didReceiveUpdate = true
+    } else {
+      const hasScheduledUpdate = checkScheduledUpdate(current, renderLanes)
+
+      if (!hasScheduledUpdate) {
+        didReceiveUpdate = false
+        // props 以及 state 均未发生变化，提前退出
+        return attemptEarlyBailoutIfNoScheduledUpdate(
+          current,
+          workInProgress,
+          renderLanes,
+        )
+      }
+
+      // An update was scheduled on this fiber, but there are no new props
+      // Set this to false. If an update queue produces a changed value,
+      // it will set this to true. Otherwise, the component will assume the
+      // children have not changed and bail out.
+      didReceiveUpdate = false
+    }
+  } else {
+    didReceiveUpdate = false
+  }
+
   switch (workInProgress.tag) {
-    // 把 IndeterminateComponent 当成 FunctionComponent 处理
-    case IndeterminateComponent:
     case FunctionComponent: {
       const { pendingProps, type: Component } = workInProgress
       return updateFunctionComponent(
@@ -70,6 +105,11 @@ function updateFunctionComponent(
     nextProps,
     renderLanes,
   )
+
+  if (current !== null && !didReceiveUpdate) {
+    bailoutHooks(current, workInProgress, renderLanes)
+    return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes)
+  }
 
   reconcileChildren(current, workInProgress, nextChildren, renderLanes)
   return workInProgress.child
@@ -174,4 +214,54 @@ function markRef(current: Fiber | null, workInProgress: Fiber) {
     // Schedule a Ref effect
     workInProgress.flags |= Ref
   }
+}
+
+function checkScheduledUpdate(current: Fiber, renderLanes: Lanes): boolean {
+  // Before performing an early bailout, we must check if there are pending
+  // updates or context.
+  const updateLanes = current.lanes
+  if (includesSomeLane(updateLanes, renderLanes)) {
+    return true
+  }
+  return false
+}
+
+function attemptEarlyBailoutIfNoScheduledUpdate(
+  current: Fiber,
+  workInProgress: Fiber,
+  renderLanes: Lanes,
+) {
+  // This fiber does not have any pending work. Bailout without entering
+  // the begin phase. There's still some bookkeeping we that needs to be done
+  // in this optimized path, mostly pushing stuff onto the stack.
+
+  return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes)
+}
+
+function bailoutOnAlreadyFinishedWork(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  renderLanes: Lanes,
+): Fiber | null {
+  markSkippedUpdateLanes(workInProgress.lanes)
+
+  // Check if the children have any pending work.
+  if (!includesSomeLane(renderLanes, workInProgress.childLanes)) {
+    // The children don't have any work either. We can skip them.
+    return null
+  }
+
+  // This fiber doesn't have work, but its subtree does. Clone the child
+  // fibers and continue.
+  // workInProgress 没有需要提交的更新，克隆其 children fiber，因此 children 的 props 未发生变化
+  cloneChildFibers(current, workInProgress)
+  return workInProgress.child
+}
+
+export function markWorkInProgressReceivedUpdate() {
+  didReceiveUpdate = true
+}
+
+export function checkIfWorkInProgressReceivedUpdate() {
+  return didReceiveUpdate
 }

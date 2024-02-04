@@ -1,19 +1,37 @@
 import ReactSharedInternals from "shared/ReactSharedInternals"
-
 import type { Fiber, Dispatcher } from "./ReactInternalTypes"
 import type { Lanes, Lane } from "./ReactFiberLane"
-
+import type { Flags } from "./ReactFiberFlags"
+import type { HookFlags } from "./ReactHookEffectTags"
 import {
   enqueueConcurrentHookUpdate,
   enqueueConcurrentHookUpdateAndEagerlyBailout,
 } from "./ReactFiberConcurrentUpdates"
-import { NoLanes, NoLane, isSubsetOfLanes, mergeLanes } from "./ReactFiberLane"
+import {
+  Passive as PassiveEffect,
+  Update as UpdateEffect,
+  PassiveStatic as PassiveStaticEffect,
+  LayoutStatic as LayoutStaticEffect,
+} from "./ReactFiberFlags"
+import {
+  Passive as HookPassive,
+  HasEffect as HookHasEffect,
+  Layout as HookLayout,
+} from "./ReactHookEffectTags"
+import {
+  NoLanes,
+  NoLane,
+  isSubsetOfLanes,
+  mergeLanes,
+  removeLanes,
+} from "./ReactFiberLane"
 import {
   requestUpdateLane,
   requestEventTime,
   scheduleUpdateOnFiber,
   markSkippedUpdateLanes,
 } from "./ReactFiberWorkLoop"
+import { markWorkInProgressReceivedUpdate } from "./ReactFiberBeginWork"
 
 type BasicStateAction<S> = ((state: S) => S) | S
 type Dispatch<A> = (action: A) => void
@@ -41,6 +59,18 @@ export type UpdateQueue<S, A> = {
   dispatch: ((action: A) => unknown) | null
   lastRenderedReducer: ((state: S, action: A) => S) | null
   lastRenderedState: S | null
+}
+
+export type Effect = {
+  tag: HookFlags
+  create: () => (() => void) | void
+  destroy: (() => void) | void
+  deps: Array<unknown> | null
+  next: Effect
+}
+
+export type FunctionComponentUpdateQueue = {
+  lastEffect: Effect | null
 }
 
 const { ReactCurrentDispatcher } = ReactSharedInternals
@@ -74,6 +104,11 @@ export function renderWithHooks<Props>(
   props: Props,
   nextRenderLanes: Lanes,
 ) {
+  // useFiber 构建 workInProgress 时会复用 current 的 memoizedState、updateQueue、lanes
+  workInProgress.memoizedState = null
+  workInProgress.updateQueue = null
+  workInProgress.lanes = NoLanes
+
   renderLanes = nextRenderLanes
   currentlyRenderingFiber = workInProgress
 
@@ -343,6 +378,12 @@ function updateReducer<S, I, A>(
       newBaseQueueLast.next = newBaseQueueFirst as any
     }
 
+    // Mark that the fiber performed work, but only if the new state is
+    // different from the current state.
+    if (!Object.is(newState, hook.memoizedState)) {
+      markWorkInProgressReceivedUpdate()
+    }
+
     hook.memoizedState = newState
     hook.baseState = newBaseState
     hook.baseQueue = newBaseQueueLast
@@ -415,6 +456,11 @@ function rerenderReducer<S, I, A>(
       update = update.next
     } while (update !== firstRenderPhaseUpdate)
 
+    // Mark that the fiber performed work, but only if the new state is
+    // different from the current state.
+    if (!Object.is(newState, hook.memoizedState)) {
+      markWorkInProgressReceivedUpdate()
+    }
     hook.memoizedState = newState
     // Don't persist the state accumulated from the render phase updates to
     // the base state unless the queue is empty.
@@ -504,6 +550,133 @@ function mountRef<T>(initialValue: T): { current: T } {
 function updateRef<T>(_initialValue?: T): { current: T } {
   const hook = updateWorkInProgressHook()
   return hook.memoizedState
+}
+
+function mountEffect(
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+) {
+  return mountEffectImpl(
+    PassiveEffect | PassiveStaticEffect,
+    HookPassive,
+    create,
+    deps,
+  )
+}
+
+function updateEffect(
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+): void {
+  return updateEffectImpl(PassiveEffect, HookPassive, create, deps)
+}
+
+function mountLayoutEffect(
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+) {
+  return mountEffectImpl(
+    UpdateEffect | LayoutStaticEffect,
+    HookLayout,
+    create,
+    deps,
+  )
+}
+
+function updateLayoutEffect(
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+) {
+  return updateEffectImpl(UpdateEffect, HookLayout, create, deps)
+}
+
+function mountEffectImpl(
+  fiberFlags: Flags,
+  hookFlags: HookFlags,
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+): void {
+  const hook = mountWorkInProgressHook()
+  const nextDeps = deps === undefined ? null : deps
+  currentlyRenderingFiber.flags |= fiberFlags
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookFlags,
+    create,
+    undefined,
+    nextDeps,
+  )
+}
+
+function updateEffectImpl(
+  fiberFlags: Flags,
+  hookFlags: HookFlags,
+  create: () => (() => void) | void,
+  deps: Array<unknown> | void | null,
+): void {
+  const hook = updateWorkInProgressHook()
+  const nextDeps = deps === undefined ? null : deps
+  let destroy
+
+  if (currentHook !== null) {
+    const prevEffect = currentHook.memoizedState
+    destroy = prevEffect.destroy
+    if (nextDeps !== null) {
+      const prevDeps = prevEffect.deps
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        hook.memoizedState = pushEffect(hookFlags, create, destroy, nextDeps)
+        return
+      }
+    }
+  }
+
+  currentlyRenderingFiber.flags |= fiberFlags
+
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookFlags,
+    create,
+    destroy,
+    nextDeps,
+  )
+}
+
+function pushEffect(
+  tag: HookFlags,
+  create: () => (() => void) | void,
+  destroy: (() => void) | void,
+  deps: Array<unknown> | null,
+) {
+  const effect: Effect = {
+    tag,
+    create,
+    destroy,
+    deps,
+    // Circular
+    next: null as any,
+  }
+  let componentUpdateQueue: null | FunctionComponentUpdateQueue =
+    currentlyRenderingFiber.updateQueue as any
+  if (componentUpdateQueue === null) {
+    componentUpdateQueue = createFunctionComponentUpdateQueue()
+    currentlyRenderingFiber.updateQueue = componentUpdateQueue as any
+    componentUpdateQueue.lastEffect = effect.next = effect
+  } else {
+    const { lastEffect } = componentUpdateQueue
+    if (lastEffect === null) {
+      componentUpdateQueue.lastEffect = effect.next = effect
+    } else {
+      const firstEffect = lastEffect.next
+      lastEffect.next = effect
+      effect.next = firstEffect
+      componentUpdateQueue.lastEffect = effect
+    }
+  }
+  return effect
+}
+
+function createFunctionComponentUpdateQueue(): FunctionComponentUpdateQueue {
+  return {
+    lastEffect: null,
+  }
 }
 
 function mountWorkInProgressHook(): Hook {
@@ -626,13 +799,14 @@ function dispatchSetState<S, A>(
     enqueueRenderPhaseUpdate(queue, update)
   } else {
     const { alternate } = fiber
-    // initialFiber.lanes 只有在 initialFiber 成为 workInProgress 时才会在 beginWork 阶段情况重置
-    // x-todo: 什么情况下会同时为 NoLanes
     if (
       fiber.lanes === NoLanes &&
       (alternate === null || alternate.lanes === NoLanes)
     ) {
-      // 目前还未做优化，这里不会触发
+      // 有两种方式删除 fiber.lanes
+      // 1.initialFiber 或 alternate 仅在成为 workInProgress 时才会在 beginWork 阶段重新根据 updateQueue 计算 lanes
+      // 2.当组件渲染后，可能由于状态没有更新(重复渲染)，提前退出 reconciler，并且从 current.lanes 删除此次 renderLanes
+
       // The queue is currently empty, which means we can eagerly compute the
       // next state before entering the render phase. If the new state is the
       // same as the current state, we may be able to bail out entirely.
@@ -758,8 +932,8 @@ const HooksDispatcherOnMount: Dispatcher = {
   useReducer: mountReducer,
   useState: mountState,
   useCallback: mountCallback,
-  // useEffect: mountEffect,
-  // useLayoutEffect: mountLayoutEffect,
+  useEffect: mountEffect,
+  useLayoutEffect: mountLayoutEffect,
   useMemo: mountMemo,
   useRef: mountRef,
 }
@@ -768,8 +942,8 @@ const HooksDispatcherOnUpdate: Dispatcher = {
   useReducer: updateReducer,
   useState: updateState,
   useCallback: updateCallback,
-  // useEffect: updateEffect,
-  // useLayoutEffect: updateLayoutEffect,
+  useEffect: updateEffect,
+  useLayoutEffect: updateLayoutEffect,
   useMemo: updateMemo,
   useRef: updateRef,
 }
@@ -778,8 +952,8 @@ const HooksDispatcherOnRerender: Dispatcher = {
   useReducer: rerenderReducer,
   useState: rerenderState,
   useCallback: updateCallback,
-  // useEffect: updateEffect,
-  // useLayoutEffect: updateLayoutEffect,
+  useEffect: updateEffect,
+  useLayoutEffect: updateLayoutEffect,
   useMemo: updateMemo,
   useRef: updateRef,
 }
@@ -795,10 +969,23 @@ const throwInvalidHookError: any = function throwInvalidHookError() {
   )
 }
 
+export function bailoutHooks(
+  current: Fiber,
+  workInProgress: Fiber,
+  lanes: Lanes,
+) {
+  // 清除 passive effect and layout effect
+  workInProgress.flags &= ~(PassiveEffect | UpdateEffect)
+
+  // workInProgress.lanes 在 renderWithHooks 中已经重新计算过了
+  // 能调用该函数，那必然不包含 lanes 了
+  current.lanes = removeLanes(current.lanes, lanes)
+}
+
 export const ContextOnlyDispatcher: Dispatcher = {
   useCallback: throwInvalidHookError,
-  // useEffect: throwInvalidHookError,
-  // useLayoutEffect: throwInvalidHookError,
+  useEffect: throwInvalidHookError,
+  useLayoutEffect: throwInvalidHookError,
   useMemo: throwInvalidHookError,
   useReducer: throwInvalidHookError,
   useRef: throwInvalidHookError,
