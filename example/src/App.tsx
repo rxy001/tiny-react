@@ -1,26 +1,26 @@
-import { useState } from "react"
+import { useState, memo } from "react"
+
+function Child() {
+  console.log("render")
+  return <div>child</div>
+}
+
+const M = memo(Child)
 
 function App() {
-  const [first, setFirst] = useState("")
-  const [last, setLast] = useState("")
-
-  console.log("render")
+  const [count, setCount] = useState(1)
 
   return (
     <div>
       <button
         onClick={() => {
-          Promise.resolve().then(() => {
-            setFirst("r")
-            setLast("xy")
-          })
+          setCount((c) => c + 1)
         }}
       >
         click
       </button>
-      <p>
-        {first} {last}
-      </p>
+      {count}
+      <M />
     </div>
   )
 }

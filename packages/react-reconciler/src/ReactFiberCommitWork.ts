@@ -8,6 +8,8 @@ import {
   HostRoot,
   HostComponent,
   HostText,
+  SimpleMemoComponent,
+  MemoComponent,
 } from "./ReactWorkTags"
 import {
   ContentReset,
@@ -143,6 +145,7 @@ function commitMutationEffectsOnFiber(
       }
       return
     }
+    case SimpleMemoComponent:
     case FunctionComponent:
       recursivelyTraverseMutationEffects(root, finishedWork, lanes)
       commitReconciliationEffects(finishedWork)
@@ -163,6 +166,7 @@ function commitMutationEffectsOnFiber(
         // by a create function in another component during the same commit.
       }
       break
+    case MemoComponent:
     case HostRoot:
     default: {
       recursivelyTraverseMutationEffects(root, finishedWork, lanes)
@@ -314,6 +318,7 @@ function commitDeletionEffectsOnFiber(
       }
       return
     }
+    case SimpleMemoComponent:
     case FunctionComponent:
       // eslint-disable-next-line no-case-declarations
       const updateQueue: FunctionComponentUpdateQueue | null =
@@ -706,6 +711,7 @@ function commitPassiveUnmountInsideDeletedTreeOnFiber(
   nearestMountedAncestor: Fiber | null,
 ) {
   switch (current.tag) {
+    case SimpleMemoComponent:
     case FunctionComponent: {
       commitHookEffectListUnmount(HookPassive, current, nearestMountedAncestor)
       break
@@ -717,6 +723,7 @@ function commitPassiveUnmountInsideDeletedTreeOnFiber(
 
 function commitPassiveUnmountOnFiber(finishedWork: Fiber): void {
   switch (finishedWork.tag) {
+    case SimpleMemoComponent:
     case FunctionComponent: {
       commitHookEffectListUnmount(
         HookPassive | HookHasEffect,
@@ -865,6 +872,7 @@ function commitPassiveMountEffects_complete() {
 
 function commitPassiveMountOnFiber(finishedWork: Fiber): void {
   switch (finishedWork.tag) {
+    case SimpleMemoComponent:
     case FunctionComponent: {
       commitHookEffectListMount(HookPassive | HookHasEffect, finishedWork)
       break
@@ -939,10 +947,12 @@ function commitLayoutMountEffects_complete() {
 function commitLayoutEffectOnFiber(finishedWork: Fiber): void {
   if ((finishedWork.flags & LayoutMask) !== NoFlags) {
     switch (finishedWork.tag) {
+      case SimpleMemoComponent:
       case FunctionComponent: {
         commitHookEffectListMount(HookLayout | HookHasEffect, finishedWork)
         break
       }
+      case MemoComponent:
       case HostRoot:
       case HostComponent:
       case HostText: {

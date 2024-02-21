@@ -19,3 +19,5 @@
    - Automatic Batching
 
 3. 根据 Lanes 优化组件重复渲染，实现 useEffect、useLayoutEffect
+
+4. 实现 React.memo

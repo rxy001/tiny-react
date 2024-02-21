@@ -1,3 +1,4 @@
+import shallowEqual from "shared/shallowEqual"
 import type { Fiber } from "./ReactInternalTypes"
 import type { Lanes } from "./ReactFiberLane"
 import type { RootState } from "./ReactFiberRoot"
@@ -7,6 +8,8 @@ import {
   HostRoot,
   HostComponent,
   HostText,
+  MemoComponent,
+  SimpleMemoComponent,
 } from "./ReactWorkTags"
 import { ContentReset, Ref } from "./ReactFiberFlags"
 import {
@@ -18,6 +21,7 @@ import {
   cloneUpdateQueue,
   processUpdateQueue,
 } from "./ReactFiberClassUpdateQueue"
+import { createFiberFromTypeAndProps, createWorkInProgress } from "./ReactFiber"
 import { shouldSetTextContent } from "./ReactFiberHostConfig"
 import { renderWithHooks, bailoutHooks } from "./ReactFiberHooks"
 import { markSkippedUpdateLanes } from "./ReactFiberWorkLoop"
@@ -80,7 +84,22 @@ export function beginWork(
       return updateHostComponent(current, workInProgress, renderLanes)
     case HostText:
       return updateHostText(current, workInProgress)
-
+    case MemoComponent:
+      return updateMemoComponent(
+        current,
+        workInProgress,
+        workInProgress.type,
+        workInProgress.pendingProps,
+        renderLanes,
+      )
+    case SimpleMemoComponent:
+      return updateSimpleMemoComponent(
+        current,
+        workInProgress,
+        workInProgress.type,
+        workInProgress.pendingProps,
+        renderLanes,
+      )
     default:
       throw new Error(
         `Unknown unit of work tag (${workInProgress.tag}). This error is likely caused by a bug in ` +
@@ -113,6 +132,129 @@ function updateFunctionComponent(
 
   reconcileChildren(current, workInProgress, nextChildren, renderLanes)
   return workInProgress.child
+}
+
+function updateMemoComponent(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  Component: any,
+  nextProps: any,
+  renderLanes: Lanes,
+) {
+  if (current === null) {
+    // type 被包装的组件
+    const { type } = Component
+
+    if (typeof type === "function" && Component.compare === null) {
+      workInProgress.tag = SimpleMemoComponent
+      workInProgress.type = type
+      return updateSimpleMemoComponent(
+        current,
+        workInProgress,
+        type,
+        nextProps,
+        renderLanes,
+      )
+    }
+
+    const child = createFiberFromTypeAndProps(
+      type,
+      null,
+      nextProps,
+      workInProgress,
+      workInProgress.mode,
+      renderLanes,
+    )
+    child.ref = workInProgress.ref
+    child.return = workInProgress
+    workInProgress.child = child
+    return child
+  }
+
+  const currentChild = current.child as any
+
+  // current 作为 Component fiber 的父 fiber，那 current 实际上是不存在更新的
+  // hasScheduledUpdate 只为 false
+  const hasScheduledUpdate = checkScheduledUpdate(current, renderLanes)
+
+  if (!hasScheduledUpdate) {
+    const prevProps = currentChild.memoizedProps
+    // Default to shallow comparison
+    let { compare } = Component
+    compare = compare !== null ? compare : shallowEqual
+    if (compare(prevProps, nextProps) && current.ref === workInProgress.ref) {
+      return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes)
+    }
+  }
+
+  const child = createWorkInProgress(currentChild, nextProps)
+  child.ref = workInProgress.ref
+  child.return = workInProgress
+  workInProgress.child = child
+  return child
+}
+
+function updateSimpleMemoComponent(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  Component: any,
+  nextProps: any,
+  renderLanes: Lanes,
+) {
+  // SimpleMemoComponent 与 FunctionCompoent 的 fiber 只是 tag 和 elementType 不同
+
+  // 能进入该函数说明 nextProps !== prevProps, 此时 didReceiveUpdate 为 true
+  if (current !== null) {
+    const prevProps = current.memoizedProps
+
+    if (
+      shallowEqual(prevProps, nextProps) &&
+      current.ref === workInProgress.ref
+    ) {
+      // 为什么判断 ref ?
+      // ref 不存在与 props 中，shallowEqual 只是浅比较.
+      // 那么 beginWork 中为啥不判断 ref 呢？
+      // nextProps === prevProps 表明父组件未渲染，ref 必然未改变
+      didReceiveUpdate = false
+
+      workInProgress.pendingProps = nextProps = prevProps
+
+      // The props are shallowly equal. Reuse the previous props object, like we
+      // would during a normal fiber bailout.
+      //
+      // We don't have strong guarantees that the props object is referentially
+      // equal during updates where we can't bail out anyway — like if the props
+      // are shallowly equal, but there's a local state or context update in the
+      // same batch.
+      //
+      // However, as a principle, we should aim to make the behavior consistent
+      // across different ways of memoizing a component. For example, React.memo
+      // has a different internal Fiber layout if you pass a normal function
+      // component (SimpleMemoComponent) versus if you pass a different type
+      // like forwardRef (MemoComponent). But this is an implementation detail.
+      // Wrapping a component in forwardRef (or React.lazy, etc) shouldn't
+      // affect whether the props object is reused during a bailout.
+      const hasScheduledUpdate = checkScheduledUpdate(current, renderLanes)
+
+      // current 实际上与 Component 相关联.
+      // 那么 dispatchSetState 绑定的就是 current 或 current.alternate
+      if (!hasScheduledUpdate) {
+        return bailoutOnAlreadyFinishedWork(
+          current,
+          workInProgress,
+          renderLanes,
+        )
+      }
+    }
+  }
+
+  return updateFunctionComponent(
+    current,
+    workInProgress,
+    Component,
+    nextProps,
+    renderLanes,
+  )
 }
 
 function updateHostRoot(

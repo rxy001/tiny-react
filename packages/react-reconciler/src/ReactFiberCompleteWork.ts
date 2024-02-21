@@ -6,6 +6,8 @@ import {
   HostRoot,
   HostComponent,
   HostText,
+  SimpleMemoComponent,
+  MemoComponent,
 } from "./ReactWorkTags"
 import { NoFlags, StaticMask, Update } from "./ReactFiberFlags"
 import { NoLanes, mergeLanes } from "./ReactFiberLane"
@@ -34,6 +36,8 @@ export function completeWork(
   // Ideally we would have a special version of the work loop only
   // for hydration.
   switch (workInProgress.tag) {
+    case SimpleMemoComponent:
+    case MemoComponent:
     case FunctionComponent:
     case HostRoot: {
       bubbleProperties(workInProgress)

@@ -1,4 +1,5 @@
 import type { ReactElement } from "react"
+import { REACT_MEMO_TYPE } from "shared/ReactSymbols"
 import type { RootTag } from "./ReactRootTags"
 import type { Fiber } from "./ReactInternalTypes"
 import type { WorkTag } from "./ReactWorkTags"
@@ -12,6 +13,7 @@ import {
   HostComponent,
   HostText,
   FunctionComponent,
+  MemoComponent,
 } from "./ReactWorkTags"
 import { NoFlags, StaticMask } from "./ReactFiberFlags"
 
@@ -159,9 +161,19 @@ export function createFiberFromTypeAndProps(
   const resolvedType = type
   if (typeof type === "string") {
     fiberTag = HostComponent
+  } else if (typeof type === "object" && type !== null) {
+    switch (type.$$typeof) {
+      case REACT_MEMO_TYPE:
+        fiberTag = MemoComponent
+        break
+      default:
+        throw new Error(`Error: unknown element type ${type}`)
+    }
   }
 
   const fiber = createFiber(fiberTag, pendingProps, key, mode)
+  // ReactElement.type: 函数式组件为函数， HostComponent 为  字符串， MemoComponent 为 Object($$typeof REACT_MEMO_TYPE)
+  // HostText 不再这里创建
   fiber.elementType = type
 
   // 通常情况下 type === elementType. Lazy、Fragment 为 null

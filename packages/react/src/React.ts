@@ -7,8 +7,10 @@ import {
   useEffect,
   useLayoutEffect,
 } from "./ReactHooks"
+import { memo } from "./ReactMemo"
 
 export {
+  memo,
   useState,
   useCallback,
   useMemo,

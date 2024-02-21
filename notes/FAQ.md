@@ -133,3 +133,18 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />)
 10. 当 `setState` 与目前 state 同一值时，React 可能还会重新渲染特定组件，但不会渲染其子组件以及触发 effect ?
 
 `dispatchSetState` 时 `fiber.lanes === NoLanes && (alternate === null || alternate.lanes === NoLanes)` 才能完全跳过更新任务。此时表明 `updateQueue` 为空，但 `updateQueue` 为空不代表上述条件成立。 `dispatchSetState` 会同时设置 `fiber` 与 `fiber.alternate` 的 `lanes`，而 `lanes` 值是在组件渲染期间重新计算的，因此在 `setState` 后组件至少需要渲染2次才能将 `fiber.lanes` 和 `fiber.alternate.lanes` 设置为 `NoLanes`。
+
+11. `effects` 执行顺序
+
+- 卸载组件 unmountEffects 前序遍历执行
+- unmountEffects 后序遍历执行
+- mountEffects 后序遍历执行
+
+LayoutEffects 和 PassiveEffects 都遵循上述顺序，只是执行时机不同.
+
+LayoutEffects: unmountEffects 与 DOM 更新同时进行. mountEffects 在 DOM Tree 更新之后执行
+PassiveEffects: 当为同步更新任务时，在 LayoutEffects 之后同步执行，否则为异步执行. 在 v18 之前均为异步执行.
+
+mountEffects 和 unmountEffects 执行顺序于 React 对 DOM 更新的顺序一致，其也是后序。
+
+无论是 unmountEffect 父组件优先于子组件执行，还是 mountEffect 子组件优先于父组件执行，原因都是父组件可能依赖子组件的部分资源. https://github.com/facebook/react/issues/16728#issuecomment-584208473
