@@ -39,6 +39,7 @@
   },
   "overrides": [
     {
+      "files": ["**/*.ts", "**/*.tsx"],
       "extends": [
         "plugin:import/typescript",
         "plugin:@typescript-eslint/recommended"
@@ -58,7 +59,6 @@
         "sourceType": "module",
         "project": true
       },
-      "files": ["**/*.ts", "**/*.tsx"],
       "rules": {
         "@typescript-eslint/no-explicit-any": 0,
         "@typescript-eslint/no-unused-vars": [

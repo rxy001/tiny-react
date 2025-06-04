@@ -1,7 +1,6 @@
 import { useState, memo } from "react"
 
 function Child() {
-  console.log("render")
   return <div>child</div>
 }
 

@@ -137,7 +137,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />)
 11. `effects` 执行顺序
 
 - 卸载组件 unmountEffects 前序遍历执行
-- unmountEffects 后序遍历执行
+- unmountEffects 前序遍历执行
 - mountEffects 后序遍历执行
 
 LayoutEffects 和 PassiveEffects 都遵循上述顺序，只是执行时机不同.
@@ -145,6 +145,6 @@ LayoutEffects 和 PassiveEffects 都遵循上述顺序，只是执行时机不�
 LayoutEffects: unmountEffects 与 DOM 更新同时进行. mountEffects 在 DOM Tree 更新之后执行
 PassiveEffects: 当为同步更新任务时，在 LayoutEffects 之后同步执行，否则为异步执行. 在 v18 之前均为异步执行.
 
-mountEffects 和 unmountEffects 执行顺序于 React 对 DOM 更新的顺序一致，其也是后序。
+mountEffects 执行顺序于 React 对 DOM 更新的顺序一致，其也是后序。
 
 无论是 unmountEffect 父组件优先于子组件执行，还是 mountEffect 子组件优先于父组件执行，原因都是父组件可能依赖子组件的部分资源. https://github.com/facebook/react/issues/16728#issuecomment-584208473

@@ -26,7 +26,7 @@ function main() {
   //   env: { ...process.env },
   // })
   // 使用 ts-node-esm 会报 module type 错误
-  // Error: Must use import to load ES Module: /Users/devin/Desktop/react-x/scripts/jest/jest-config.ts
+  // Error: Must use import to load ES Module: /Users/devin/Desktop/tiny-react/scripts/jest/jest-config.ts
   // 这是由于 jest 内部使用的是 commonjs 而 ts-node-esm 使用的是 es module
   // jest 内部使用如下代码覆盖其模块类型，但还是报错
   // 解决方法：在根目录 tsconfig.json 手动添加以下配置就行了。不理解？

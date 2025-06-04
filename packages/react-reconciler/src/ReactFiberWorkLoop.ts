@@ -478,7 +478,6 @@ function performUnitOfWork(unitOfWork: Fiber): void {
   // nothing should rely on this, but relying on it here means that we don't
   // need an additional field on the work in progress.
   const current = unitOfWork.alternate
-
   const next = beginWork(current, unitOfWork, subtreeRenderLanes)
 
   unitOfWork.memoizedProps = unitOfWork.pendingProps

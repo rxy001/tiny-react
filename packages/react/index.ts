@@ -8,3 +8,6 @@ export {
   useEffect,
   useLayoutEffect,
 } from "./src/React"
+
+// Re-export specific types from react as needed
+export type { ReactNode, ReactElement, FC, ComponentProps } from "react"

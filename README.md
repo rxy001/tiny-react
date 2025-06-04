@@ -1,5 +1,7 @@
 ### tiny-react
 
+从零实现 React@18.2.0 部分核心功能，深入理解 React 源码实现.
+
 #### ChangeLog
 
 1. 基于 Fiber 架构实现 React 组件同步更新与挂载.

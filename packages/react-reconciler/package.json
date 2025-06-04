@@ -10,8 +10,8 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "react-dom": "workspace:^",
-    "scheduler": "workspace:^",
-    "shared": "workspace:^"
+    "react-dom": "workspace:*",
+    "scheduler": "workspace:*",
+    "shared": "workspace:*"
   }
 }
